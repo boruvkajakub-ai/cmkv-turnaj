@@ -4338,75 +4338,57 @@
                 };
             };
 
-            // 1. Propaguj do přímo následujícího kola (standardní flow)
-            const nextRoundIdx = roundIdx + 1;
-            if (bracket[nextRoundIdx]) {
-                const nextMatchIdx = Math.floor(matchIdx / 2);
-                const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
-                if (nextMatch) {
-                    const isTopSlot = matchIdx % 2 === 0;
-                    const propagatedPlayer = createPropagatedPlayer(winnerPlayer);
-
-                    if (isTopSlot) {
-                        nextMatch.player1 = propagatedPlayer;
-                    } else {
-                        nextMatch.player2 = propagatedPlayer;
-                    }
-                }
-            }
-
-            // 2. Projdi VŠECHNY zápasy a najdi ty co odkazují na tento zápas přes sourceMatch
+            // Projdi VŠECHNY zápasy a najdi ty co odkazují na tento zápas přes sourceMatch
+            let propagatedViaSourceMatch = false;
             bracket.forEach((round, rIdx) => {
                 round.forEach((m, mIdx) => {
                     // Zkontroluj player1
                     if (m.player1?.sourceMatch?.roundIdx === roundIdx && 
                         m.player1?.sourceMatch?.matchIdx === matchIdx) {
                         m.player1 = createPropagatedPlayer(winnerPlayer);
+                        propagatedViaSourceMatch = true;
                     }
                     // Zkontroluj player2
                     if (m.player2?.sourceMatch?.roundIdx === roundIdx && 
                         m.player2?.sourceMatch?.matchIdx === matchIdx) {
                         m.player2 = createPropagatedPlayer(winnerPlayer);
+                        propagatedViaSourceMatch = true;
                     }
                 });
             });
+
+            // POUZE pokud NEBYLA sourceMatch propagace, použij standardní flow
+            if (!propagatedViaSourceMatch) {
+                const nextRoundIdx = roundIdx + 1;
+                if (bracket[nextRoundIdx]) {
+                    const nextMatchIdx = Math.floor(matchIdx / 2);
+                    const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
+                    if (nextMatch) {
+                        const isTopSlot = matchIdx % 2 === 0;
+                        const propagatedPlayer = createPropagatedPlayer(winnerPlayer);
+
+                        if (isTopSlot) {
+                            nextMatch.player1 = propagatedPlayer;
+                        } else {
+                            nextMatch.player2 = propagatedPlayer;
+                        }
+                    }
+                }
+            }
         }
 
         function clearBracketWinner(bracketId, roundIdx, matchIdx) {
             const bracket = bracketId === 'vf' ? tournamentData.vfBracket : tournamentData.mfBracket;
             
-            // 1. Vyčisti přímo následující kolo (standardní flow)
-            const nextRoundIdx = roundIdx + 1;
-            if (bracket[nextRoundIdx]) {
-                const nextMatchIdx = Math.floor(matchIdx / 2);
-                const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
-                if (nextMatch) {
-                    const isTopSlot = matchIdx % 2 === 0;
-                    if (isTopSlot) {
-                        nextMatch.player1 = { displayName: 'TBD' };
-                    } else {
-                        nextMatch.player2 = { displayName: 'TBD' };
-                    }
-
-                    // Pokud další kolo má výsledek, resetuj ho také (kaskádově)
-                    if (nextMatch.winner) {
-                        nextMatch.score1 = null;
-                        nextMatch.score2 = null;
-                        nextMatch.winner = null;
-                        nextMatch.sets = [];
-                        nextMatch.played = false;
-                        clearBracketWinner(bracketId, nextRoundIdx, nextMatchIdx);
-                    }
-                }
-            }
-
-            // 2. Projdi VŠECHNY zápasy a obnov sourceMatch odkazy
+            // Projdi VŠECHNY zápasy a obnov sourceMatch odkazy
+            let clearedViaSourceMatch = false;
             bracket.forEach((round, rIdx) => {
                 round.forEach((m, mIdx) => {
                     // Zkontroluj player1
                     if (m.player1?.sourceMatch?.roundIdx === roundIdx && 
                         m.player1?.sourceMatch?.matchIdx === matchIdx) {
                         m.player1 = { displayName: 'TBD', sourceMatch: { roundIdx, matchIdx } };
+                        clearedViaSourceMatch = true;
                         // Reset tohoto zápasu pokud má výsledek
                         if (m.winner) {
                             m.score1 = null;
@@ -4421,6 +4403,7 @@
                     if (m.player2?.sourceMatch?.roundIdx === roundIdx && 
                         m.player2?.sourceMatch?.matchIdx === matchIdx) {
                         m.player2 = { displayName: 'TBD', sourceMatch: { roundIdx, matchIdx } };
+                        clearedViaSourceMatch = true;
                         // Reset tohoto zápasu pokud má výsledek
                         if (m.winner) {
                             m.score1 = null;
@@ -4433,6 +4416,33 @@
                     }
                 });
             });
+
+            // POUZE pokud NEBYLA sourceMatch clear, použij standardní flow
+            if (!clearedViaSourceMatch) {
+                const nextRoundIdx = roundIdx + 1;
+                if (bracket[nextRoundIdx]) {
+                    const nextMatchIdx = Math.floor(matchIdx / 2);
+                    const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
+                    if (nextMatch) {
+                        const isTopSlot = matchIdx % 2 === 0;
+                        if (isTopSlot) {
+                            nextMatch.player1 = { displayName: 'TBD' };
+                        } else {
+                            nextMatch.player2 = { displayName: 'TBD' };
+                        }
+
+                        // Pokud další kolo má výsledek, resetuj ho také (kaskádově)
+                        if (nextMatch.winner) {
+                            nextMatch.score1 = null;
+                            nextMatch.score2 = null;
+                            nextMatch.winner = null;
+                            nextMatch.sets = [];
+                            nextMatch.played = false;
+                            clearBracketWinner(bracketId, nextRoundIdx, nextMatchIdx);
+                        }
+                    }
+                }
+            }
         }
 
         function toggleBracketLock(bracketId) {

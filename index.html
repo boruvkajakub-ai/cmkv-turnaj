@@ -3280,14 +3280,13 @@
 
             match.played = true;
 
+            // Nastav vítěze
             if (s1 > s2) {
-                match.player1.wins++;
+                match.winner = 1;
                 match.player1.currentPoints += 10;
-                match.player2.losses++;
             } else {
-                match.player2.wins++;
+                match.winner = 2;
                 match.player2.currentPoints += 10;
-                match.player1.losses++;
             }
             match.player1.setsWon += s1;
             match.player1.setsLost += s2;
@@ -3498,6 +3497,80 @@
 
                 html += `</tbody></table>`;
                 
+                // Přidej křížovou tabulku výsledků
+                html += `
+                    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <div style="font-weight: 700; color: #1e3c72; margin-bottom: 10px; font-size: 14px;">📋 Křížová tabulka výsledků</div>
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white;">
+                                <thead>
+                                    <tr style="background: #1e3c72; color: white;">
+                                        <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">${groupLabel}</th>
+                `;
+                
+                // Hlavička sloupců - čísla soupeřů
+                sorted.forEach((p, i) => {
+                    html += `<th style="padding: 8px; text-align: center; border: 1px solid #ddd; min-width: 60px;">${i + 1}</th>`;
+                });
+                html += `
+                                        <th style="padding: 8px; text-align: center; border: 1px solid #ddd; background: rgba(255,255,255,0.1);">V</th>
+                                        <th style="padding: 8px; text-align: center; border: 1px solid #ddd; background: rgba(255,255,255,0.1);">P</th>
+                                        <th style="padding: 8px; text-align: center; border: 1px solid #ddd; background: rgba(255,255,255,0.1);">Sety</th>
+                                        <th style="padding: 8px; text-align: center; border: 1px solid #ddd; background: rgba(255,255,255,0.1);">Body</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                `;
+                
+                const matches = tournamentData.matches[groupIndex] || [];
+                
+                sorted.forEach((player, rowIdx) => {
+                    const bg = rowIdx % 2 === 0 ? '#fff' : '#f5f8ff';
+                    html += `<tr style="background: ${bg};">`;
+                    html += `<td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${rowIdx + 1} ${player.name}</td>`;
+                    
+                    // Sloupce s výsledky proti jednotlivým soupeřům
+                    sorted.forEach((opponent, colIdx) => {
+                        if (rowIdx === colIdx) {
+                            // Diagonála - hráč proti sobě
+                            html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: repeating-linear-gradient(45deg, #e0e0e0, #e0e0e0 10px, #f0f0f0 10px, #f0f0f0 20px);"></td>`;
+                        } else {
+                            // Najdi zápas mezi těmito hráči
+                            const match = matches.find(m => 
+                                (m.player1.id === player.id && m.player2.id === opponent.id) ||
+                                (m.player2.id === player.id && m.player1.id === opponent.id)
+                            );
+                            
+                            if (match && match.played) {
+                                const isPlayer1 = match.player1.id === player.id;
+                                const myScore = isPlayer1 ? match.score1 : match.score2;
+                                const oppScore = isPlayer1 ? match.score2 : match.score1;
+                                const won = (isPlayer1 && match.winner === 1) || (!isPlayer1 && match.winner === 2);
+                                const resultColor = won ? '#d4edda' : '#f8d7da';
+                                const textColor = won ? '#155724' : '#721c24';
+                                
+                                html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; background: ${resultColor}; color: ${textColor}; font-weight: 700;">${myScore}:${oppScore}</td>`;
+                            } else {
+                                html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; color: #999;">–</td>`;
+                            }
+                        }
+                    });
+                    
+                    // Statistiky na konci řádku
+                    html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; font-weight: 600; color: #28a745;">${player.wins}</td>`;
+                    html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; font-weight: 600; color: #dc3545;">${player.losses}</td>`;
+                    html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd;">${player.setsWon}:${player.setsLost}</td>`;
+                    html += `<td style="padding: 8px; text-align: center; border: 1px solid #ddd; font-weight: 800; color: #1e3c72; font-size: 14px;">${player.currentPoints || 0}</td>`;
+                    html += `</tr>`;
+                });
+                
+                html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+                
                 if (!tournamentData.isSingleGroup) {
                     html += `
                         <div style="padding: 10px; font-size: 12px; color: #666;">
@@ -3526,7 +3599,6 @@
                         <div style="font-weight: 700; color: #1e3c72; margin-bottom: 10px; font-size: 13px;">📋 ${bergerSchedule}</div>
                 `;
                 
-                const matches = tournamentData.matches[groupIndex] || [];
                 const matchesByRound = {};
                 matches.forEach(match => {
                     if (!matchesByRound[match.round]) {
@@ -4324,7 +4396,12 @@
             const match = bracket[roundIdx][matchIdx];
             if (!match || !match.winner) return;
 
+            console.log(`\n=== PROPAGATE WINNER ===`);
+            console.log(`Bracket: ${bracketId}, Round: ${roundIdx}, Match: ${matchIdx}`);
+            console.log(`Winner: ${match.winner === 1 ? 'Player1' : 'Player2'}`);
+
             const winnerPlayer = match.winner === 1 ? match.player1 : match.player2;
+            console.log(`Winner player:`, winnerPlayer);
 
             // Vytvoř propagovaného hráče s pozicí + jménem
             const createPropagatedPlayer = (player) => {
@@ -4345,36 +4422,54 @@
                     // Zkontroluj player1
                     if (m.player1?.sourceMatch?.roundIdx === roundIdx && 
                         m.player1?.sourceMatch?.matchIdx === matchIdx) {
+                        console.log(`  → SourceMatch propagation to Round ${rIdx}, Match ${mIdx}, Player1`);
                         m.player1 = createPropagatedPlayer(winnerPlayer);
                         propagatedViaSourceMatch = true;
                     }
                     // Zkontroluj player2
                     if (m.player2?.sourceMatch?.roundIdx === roundIdx && 
                         m.player2?.sourceMatch?.matchIdx === matchIdx) {
+                        console.log(`  → SourceMatch propagation to Round ${rIdx}, Match ${mIdx}, Player2`);
                         m.player2 = createPropagatedPlayer(winnerPlayer);
                         propagatedViaSourceMatch = true;
                     }
                 });
             });
 
+            console.log(`SourceMatch propagation used: ${propagatedViaSourceMatch}`);
+
             // POUZE pokud NEBYLA sourceMatch propagace, použij standardní flow
             if (!propagatedViaSourceMatch) {
                 const nextRoundIdx = roundIdx + 1;
+                console.log(`Using STANDARD propagation to round ${nextRoundIdx}`);
                 if (bracket[nextRoundIdx]) {
                     const nextMatchIdx = Math.floor(matchIdx / 2);
                     const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
+                    console.log(`  Next match: Round ${nextRoundIdx}, Match ${nextMatchIdx}`);
                     if (nextMatch) {
                         const isTopSlot = matchIdx % 2 === 0;
+                        console.log(`  Is top slot: ${isTopSlot} (matchIdx=${matchIdx}, matchIdx%2=${matchIdx%2})`);
                         const propagatedPlayer = createPropagatedPlayer(winnerPlayer);
+
+                        console.log(`  BEFORE propagation:`);
+                        console.log(`    Player1:`, nextMatch.player1);
+                        console.log(`    Player2:`, nextMatch.player2);
 
                         if (isTopSlot) {
                             nextMatch.player1 = propagatedPlayer;
+                            console.log(`  → Set Player1 to:`, propagatedPlayer);
                         } else {
                             nextMatch.player2 = propagatedPlayer;
+                            console.log(`  → Set Player2 to:`, propagatedPlayer);
                         }
+
+                        console.log(`  AFTER propagation:`);
+                        console.log(`    Player1:`, nextMatch.player1);
+                        console.log(`    Player2:`, nextMatch.player2);
                     }
                 }
             }
+            console.log(`=== END PROPAGATE ===\n`);
         }
 
         function clearBracketWinner(bracketId, roundIdx, matchIdx) {
@@ -5560,7 +5655,7 @@
         }
 
         function calculatePlayerStats() {
-            // Reset statistik všech hráčů
+            // Reset všech statistik
             tournamentData.players.forEach(p => {
                 p.wins = 0;
                 p.losses = 0;
@@ -5570,85 +5665,95 @@
                 p.ballsLost = 0;
             });
 
-            // 1. Spočítej statistiky ze skupinových zápasů
-            tournamentData.matches.forEach(groupMatches => {
-                if (!groupMatches) return;
-                groupMatches.forEach(match => {
-                    if (!match.played) return;
-
-                    const p1 = tournamentData.players.find(p => p.id === match.player1.id);
-                    const p2 = tournamentData.players.find(p => p.id === match.player2.id);
+            // Spočítej ze skupinových zápasů
+            if (tournamentData.matches) {
+                tournamentData.matches.forEach(groupMatches => {
+                    if (!groupMatches) return;
                     
-                    if (!p1 || !p2) return;
-
-                    // Výhry/prohry
-                    if (match.winner === 1) {
-                        p1.wins++;
-                        p2.losses++;
-                    } else if (match.winner === 2) {
-                        p2.wins++;
-                        p1.losses++;
-                    }
-
-                    // Sety
-                    p1.setsWon += (match.score1 || 0);
-                    p1.setsLost += (match.score2 || 0);
-                    p2.setsWon += (match.score2 || 0);
-                    p2.setsLost += (match.score1 || 0);
-
-                    // Míčky ze setů
-                    if (match.sets && match.sets.length > 0) {
-                        match.sets.forEach(set => {
-                            if (set && set[0] != null && set[1] != null) {
-                                p1.ballsWon += set[0];
-                                p1.ballsLost += set[1];
-                                p2.ballsWon += set[1];
-                                p2.ballsLost += set[0];
-                            }
-                        });
-                    }
+                    groupMatches.forEach(match => {
+                        if (!match.played) return;
+                        
+                        // Najdi hráče podle ID
+                        const p1 = tournamentData.players.find(p => p.id === match.player1.id);
+                        const p2 = tournamentData.players.find(p => p.id === match.player2.id);
+                        
+                        if (!p1 || !p2) return;
+                        
+                        // Započítej výhry/prohry
+                        if (match.winner == 1) {  // použij == místo === pro string/number
+                            p1.wins = (p1.wins || 0) + 1;
+                            p2.losses = (p2.losses || 0) + 1;
+                        } else if (match.winner == 2) {
+                            p2.wins = (p2.wins || 0) + 1;
+                            p1.losses = (p1.losses || 0) + 1;
+                        }
+                        
+                        // Započítej sety
+                        if (match.score1 != null) {
+                            p1.setsWon = (p1.setsWon || 0) + (match.score1 || 0);
+                            p1.setsLost = (p1.setsLost || 0) + (match.score2 || 0);
+                            p2.setsWon = (p2.setsWon || 0) + (match.score2 || 0);
+                            p2.setsLost = (p2.setsLost || 0) + (match.score1 || 0);
+                        }
+                        
+                        // Započítej míčky
+                        if (match.sets && Array.isArray(match.sets)) {
+                            match.sets.forEach(set => {
+                                if (set && set[0] != null && set[1] != null) {
+                                    p1.ballsWon = (p1.ballsWon || 0) + set[0];
+                                    p1.ballsLost = (p1.ballsLost || 0) + set[1];
+                                    p2.ballsWon = (p2.ballsWon || 0) + set[1];
+                                    p2.ballsLost = (p2.ballsLost || 0) + set[0];
+                                }
+                            });
+                        }
+                    });
                 });
-            });
+            }
 
-            // 2. Spočítej statistiky z pavouků (VF + MF)
+            // Spočítej z pavouků (VF + MF)
             [tournamentData.vfBracket, tournamentData.mfBracket].forEach(bracket => {
                 if (!bracket) return;
+                
                 bracket.forEach(round => {
                     round.forEach(match => {
-                        if (!match.played || match.player1?.isBye || match.player2?.isBye) return;
-
-                        // Najdi hráče podle jména (bracket players mají position + name v displayName)
-                        const p1Name = match.player1?.name || match.player1?.displayName?.split(' ').slice(1).join(' ');
-                        const p2Name = match.player2?.name || match.player2?.displayName?.split(' ').slice(1).join(' ');
+                        if (!match.played) return;
+                        if (match.player1?.isBye || match.player2?.isBye) return;
+                        
+                        // Extrahuj jména hráčů
+                        const p1Name = match.player1?.name || (match.player1?.displayName || '').split(' ').slice(1).join(' ');
+                        const p2Name = match.player2?.name || (match.player2?.displayName || '').split(' ').slice(1).join(' ');
                         
                         const p1 = tournamentData.players.find(p => p.name === p1Name);
                         const p2 = tournamentData.players.find(p => p.name === p2Name);
-
+                        
                         if (!p1 || !p2) return;
-
-                        // Výhry/prohry
-                        if (match.winner === 1) {
-                            p1.wins++;
-                            p2.losses++;
-                        } else if (match.winner === 2) {
-                            p2.wins++;
-                            p1.losses++;
+                        
+                        // Započítej výhry/prohry
+                        if (match.winner == 1) {
+                            p1.wins = (p1.wins || 0) + 1;
+                            p2.losses = (p2.losses || 0) + 1;
+                        } else if (match.winner == 2) {
+                            p2.wins = (p2.wins || 0) + 1;
+                            p1.losses = (p1.losses || 0) + 1;
                         }
-
-                        // Sety
-                        p1.setsWon += (match.score1 || 0);
-                        p1.setsLost += (match.score2 || 0);
-                        p2.setsWon += (match.score2 || 0);
-                        p2.setsLost += (match.score1 || 0);
-
-                        // Míčky ze setů
-                        if (match.sets && match.sets.length > 0) {
+                        
+                        // Započítej sety
+                        if (match.score1 != null) {
+                            p1.setsWon = (p1.setsWon || 0) + (match.score1 || 0);
+                            p1.setsLost = (p1.setsLost || 0) + (match.score2 || 0);
+                            p2.setsWon = (p2.setsWon || 0) + (match.score2 || 0);
+                            p2.setsLost = (p2.setsLost || 0) + (match.score1 || 0);
+                        }
+                        
+                        // Započítej míčky
+                        if (match.sets && Array.isArray(match.sets)) {
                             match.sets.forEach(set => {
                                 if (set && set[0] != null && set[1] != null) {
-                                    p1.ballsWon += set[0];
-                                    p1.ballsLost += set[1];
-                                    p2.ballsWon += set[1];
-                                    p2.ballsLost += set[0];
+                                    p1.ballsWon = (p1.ballsWon || 0) + set[0];
+                                    p1.ballsLost = (p1.ballsLost || 0) + set[1];
+                                    p2.ballsWon = (p2.ballsWon || 0) + set[1];
+                                    p2.ballsLost = (p2.ballsLost || 0) + set[0];
                                 }
                             });
                         }

@@ -3411,6 +3411,9 @@
 
         // ── §19  POŘADÍ & PRAVIDLA ───────────────────────────────────────
         function displayStandings() {
+            // Přepočítej statistiky před zobrazením
+            calculatePlayerStats();
+            
             const container = document.getElementById('standingsContainer');
             container.innerHTML = '';
 
@@ -3648,14 +3651,14 @@
                 vfPlayers.push({
                     ...sorted[0],
                     position: `${groupLetter}1`,
-                    displayName: allGroupsLocked && sorted[0] ? sorted[0].name : `${groupLetter}1`,
+                    displayName: sorted[0] ? `${groupLetter}1 ${sorted[0].name}` : `${groupLetter}1`,
                     groupIndex: groupIndex,
                     rank: 1
                 });
                 vfPlayers.push({
                     ...sorted[1],
                     position: `${groupLetter}2`,
-                    displayName: allGroupsLocked && sorted[1] ? sorted[1].name : `${groupLetter}2`,
+                    displayName: sorted[1] ? `${groupLetter}2 ${sorted[1].name}` : `${groupLetter}2`,
                     groupIndex: groupIndex,
                     rank: 2
                 });
@@ -3664,7 +3667,7 @@
                     mfPlayers.push({
                         ...sorted[i],
                         position: `${groupLetter}${i + 1}`,
-                        displayName: allGroupsLocked && sorted[i] ? sorted[i].name : `${groupLetter}${i + 1}`,
+                        displayName: sorted[i] ? `${groupLetter}${i + 1} ${sorted[i].name}` : `${groupLetter}${i + 1}`,
                         groupIndex: groupIndex,
                         rank: i + 1
                     });
@@ -3675,6 +3678,10 @@
             tournamentData.mfBracket = createProperBracket(mfPlayers);
 
             autoAssignBracketTables();
+            
+            // Auto-propaguj BYE zápasy hned po vytvoření
+            autoPropagateByes('vf');
+            autoPropagateByes('mf');
         }
 
         function createProperBracket(players) {
@@ -3948,8 +3955,53 @@
         }
 
         function displayBrackets() {
+            // Auto-propaguj BYE zápasy pokud ještě nejsou propagované
+            autoPropagateByes('vf');
+            autoPropagateByes('mf');
+            
             displayBracket('vfBracket', tournamentData.vfBracket, 'Hlavní finále (VF)');
             displayBracket('mfBracket', tournamentData.mfBracket, 'Malé finále (MF)');
+        }
+
+        function autoPropagateByes(bracketId) {
+            const bracket = bracketId === 'vf' ? tournamentData.vfBracket : tournamentData.mfBracket;
+            if (!bracket || bracket.length === 0) return;
+
+            let propagated = false;
+            
+            // Projdi všechny zápasy v pavouku
+            bracket.forEach((round, roundIdx) => {
+                round.forEach((match, matchIdx) => {
+                    // Pokud má match BYE a ještě není propagovaný
+                    if (!match.winner && !match.played) {
+                        const p1IsBye = match.player1?.isBye;
+                        const p2IsBye = match.player2?.isBye;
+                        
+                        if (p1IsBye || p2IsBye) {
+                            // Automaticky propaguj hráče který NENÍ BYE
+                            if (p2IsBye && match.player1 && !match.player1.isBye) {
+                                match.winner = 1;
+                                match.played = true;
+                                match.score1 = 3;
+                                match.score2 = 0;
+                                propagateBracketWinner(bracketId, roundIdx, matchIdx);
+                                propagated = true;
+                            } else if (p1IsBye && match.player2 && !match.player2.isBye) {
+                                match.winner = 2;
+                                match.played = true;
+                                match.score1 = 0;
+                                match.score2 = 3;
+                                propagateBracketWinner(bracketId, roundIdx, matchIdx);
+                                propagated = true;
+                            }
+                        }
+                    }
+                });
+            });
+
+            if (propagated) {
+                autosaveTick();
+            }
         }
 
         function displayBracket(containerId, bracket, title) {
@@ -4053,12 +4105,13 @@
                     const getPlayerName = (player) => {
                         if (!player) return 'TBD';
                         
-                        // Pokud má sourceMatch a ještě není propagován, zobraz pozice
+                        // Pokud má sourceMatch a ještě není propagován, zobraz pozice bez jmen
                         if (player.sourceMatch && player.displayName === 'TBD') {
                             const srcMatch = bracket[player.sourceMatch.roundIdx]?.[player.sourceMatch.matchIdx];
                             if (srcMatch) {
-                                const p1Pos = srcMatch.player1?.displayName || '?';
-                                const p2Pos = srcMatch.player2?.displayName || '?';
+                                // Extrahuj jen pozice (A1, B2) bez jmen
+                                const p1Pos = srcMatch.player1?.position || srcMatch.player1?.displayName?.split(' ')[0] || '?';
+                                const p2Pos = srcMatch.player2?.position || srcMatch.player2?.displayName?.split(' ')[0] || '?';
                                 return `${p1Pos}/${p2Pos}`;
                             }
                         }
@@ -4243,6 +4296,18 @@
 
             const winnerPlayer = match.winner === 1 ? match.player1 : match.player2;
 
+            // Vytvoř propagovaného hráče s pozicí + jménem
+            const createPropagatedPlayer = (player) => {
+                const position = player.position || '';
+                const name = player.name || player.displayName || '';
+                return {
+                    ...player,
+                    position: position,
+                    name: name,
+                    displayName: position ? `${position} ${name}` : name
+                };
+            };
+
             // 1. Propaguj do přímo následujícího kola (standardní flow)
             const nextRoundIdx = roundIdx + 1;
             if (bracket[nextRoundIdx]) {
@@ -4250,11 +4315,7 @@
                 const nextMatch = bracket[nextRoundIdx][nextMatchIdx];
                 if (nextMatch) {
                     const isTopSlot = matchIdx % 2 === 0;
-                    const propagatedPlayer = {
-                        ...winnerPlayer,
-                        displayName: winnerPlayer.name || winnerPlayer.displayName,
-                        name: winnerPlayer.name || winnerPlayer.displayName
-                    };
+                    const propagatedPlayer = createPropagatedPlayer(winnerPlayer);
 
                     if (isTopSlot) {
                         nextMatch.player1 = propagatedPlayer;
@@ -4270,20 +4331,12 @@
                     // Zkontroluj player1
                     if (m.player1?.sourceMatch?.roundIdx === roundIdx && 
                         m.player1?.sourceMatch?.matchIdx === matchIdx) {
-                        m.player1 = {
-                            ...winnerPlayer,
-                            displayName: winnerPlayer.name || winnerPlayer.displayName,
-                            name: winnerPlayer.name || winnerPlayer.displayName
-                        };
+                        m.player1 = createPropagatedPlayer(winnerPlayer);
                     }
                     // Zkontroluj player2
                     if (m.player2?.sourceMatch?.roundIdx === roundIdx && 
                         m.player2?.sourceMatch?.matchIdx === matchIdx) {
-                        m.player2 = {
-                            ...winnerPlayer,
-                            displayName: winnerPlayer.name || winnerPlayer.displayName,
-                            name: winnerPlayer.name || winnerPlayer.displayName
-                        };
+                        m.player2 = createPropagatedPlayer(winnerPlayer);
                     }
                 });
             });
@@ -5159,8 +5212,109 @@
             return str.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 100);
         }
 
+        function calculatePlayerStats() {
+            // Reset statistik všech hráčů
+            tournamentData.players.forEach(p => {
+                p.wins = 0;
+                p.losses = 0;
+                p.setsWon = 0;
+                p.setsLost = 0;
+                p.ballsWon = 0;
+                p.ballsLost = 0;
+            });
+
+            // 1. Spočítej statistiky ze skupinových zápasů
+            tournamentData.matches.forEach(groupMatches => {
+                if (!groupMatches) return;
+                groupMatches.forEach(match => {
+                    if (!match.played) return;
+
+                    const p1 = tournamentData.players.find(p => p.id === match.player1.id);
+                    const p2 = tournamentData.players.find(p => p.id === match.player2.id);
+                    
+                    if (!p1 || !p2) return;
+
+                    // Výhry/prohry
+                    if (match.winner === 1) {
+                        p1.wins++;
+                        p2.losses++;
+                    } else if (match.winner === 2) {
+                        p2.wins++;
+                        p1.losses++;
+                    }
+
+                    // Sety
+                    p1.setsWon += (match.score1 || 0);
+                    p1.setsLost += (match.score2 || 0);
+                    p2.setsWon += (match.score2 || 0);
+                    p2.setsLost += (match.score1 || 0);
+
+                    // Míčky ze setů
+                    if (match.sets && match.sets.length > 0) {
+                        match.sets.forEach(set => {
+                            if (set && set[0] != null && set[1] != null) {
+                                p1.ballsWon += set[0];
+                                p1.ballsLost += set[1];
+                                p2.ballsWon += set[1];
+                                p2.ballsLost += set[0];
+                            }
+                        });
+                    }
+                });
+            });
+
+            // 2. Spočítej statistiky z pavouků (VF + MF)
+            [tournamentData.vfBracket, tournamentData.mfBracket].forEach(bracket => {
+                if (!bracket) return;
+                bracket.forEach(round => {
+                    round.forEach(match => {
+                        if (!match.played || match.player1?.isBye || match.player2?.isBye) return;
+
+                        // Najdi hráče podle jména (bracket players mají position + name v displayName)
+                        const p1Name = match.player1?.name || match.player1?.displayName?.split(' ').slice(1).join(' ');
+                        const p2Name = match.player2?.name || match.player2?.displayName?.split(' ').slice(1).join(' ');
+                        
+                        const p1 = tournamentData.players.find(p => p.name === p1Name);
+                        const p2 = tournamentData.players.find(p => p.name === p2Name);
+
+                        if (!p1 || !p2) return;
+
+                        // Výhry/prohry
+                        if (match.winner === 1) {
+                            p1.wins++;
+                            p2.losses++;
+                        } else if (match.winner === 2) {
+                            p2.wins++;
+                            p1.losses++;
+                        }
+
+                        // Sety
+                        p1.setsWon += (match.score1 || 0);
+                        p1.setsLost += (match.score2 || 0);
+                        p2.setsWon += (match.score2 || 0);
+                        p2.setsLost += (match.score1 || 0);
+
+                        // Míčky ze setů
+                        if (match.sets && match.sets.length > 0) {
+                            match.sets.forEach(set => {
+                                if (set && set[0] != null && set[1] != null) {
+                                    p1.ballsWon += set[0];
+                                    p1.ballsLost += set[1];
+                                    p2.ballsWon += set[1];
+                                    p2.ballsLost += set[0];
+                                }
+                            });
+                        }
+                    });
+                });
+            });
+        }
+
         async function saveTournamentToSeason() {
             if (tournamentData.players.length === 0) return;
+
+            // Přepočítej statistiky před uložením
+            calculatePlayerStats();
 
             const location = tournamentData.location || 'Nezname_misto';
             const category = tournamentData.category;

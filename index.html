@@ -899,7 +899,7 @@
             </div>
         </div>
 
-        <!-- Lišta módu Správce / Divák -->
+        <!-- Lišta módu Správce / K nahlížení -->
         <!-- Countdown -->
         <div id="countdownBar" class="countdown-bar" style="display:none;"></div>
 
@@ -1402,10 +1402,10 @@
 
         function handleModeSwitch() {
             if (isAdminMode()) {
-                // Správce → přepnout na diváka
+                // Správce → přepnout na režim k nahlížení
                 setViewerMode();
             } else {
-                // Divák → žádá o správce
+                // Režim k nahlížení → žádá o přístup správce
                 openPinModal('login');
             }
         }
@@ -1424,7 +1424,7 @@
             document.body.classList.add('viewer-mode');
             const badge = document.getElementById('modeBadge');
             badge.className = 'mode-badge viewer';
-            badge.innerHTML = '👁️ Divák';
+            badge.innerHTML = '👁️ K nahlížení';
             document.getElementById('modeHint').textContent = 'Klikněte pro přístup správce (PIN)';
 
             // Naplň výběr kategorií a vyber aktivní

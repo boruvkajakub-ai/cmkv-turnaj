@@ -1273,6 +1273,19 @@
             <div id="seasonContent"></div>
         </div>
 
+        <div class="section" id="step7a">
+            <h2 style="margin-bottom: 20px; color: #1e3c72;">📋 Turnaje - výsledky</h2>
+            
+            <div style="margin-bottom:20px;padding:15px;background:#f8f9fa;border-radius:8px;">
+                <label style="font-weight:600;color:#1e3c72;margin-right:10px;">Kategorie:</label>
+                <select id="resultsCategory" onchange="filterTournamentResults()" 
+                    style="padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+                </select>
+            </div>
+            
+            <div id="tournamentResultsContent"></div>
+        </div>
+
         <div class="section" id="step8">
             <h2 style="margin-bottom: 5px; color: #1e3c72;">📊 Statistiky hráčů – sezóna <span id="step8Year"></span></h2>
             <div id="statsContent"></div>
@@ -1503,11 +1516,11 @@
         // Obnov mód po načtení (po DOMContentLoaded)
         function initViewerMode() {
             var saved = localStorage.getItem('cmkv_mode');
-            // Výchozí: správce (při prvním spuštění)
-            if (saved === 'viewer') {
-                setViewerMode();
-            } else {
+            // Výchozí: režim k nahlížení (při prvním spuštění)
+            if (saved === 'admin') {
                 setAdminMode();
+            } else {
+                setViewerMode();
             }
         }
 
@@ -4406,11 +4419,22 @@
         }
 
         function toggleBracketLock(bracketId) {
+            const wasLocked = bracketId === 'vf' ? tournamentData.vfLocked : tournamentData.mfLocked;
+            
             if (bracketId === 'vf') {
                 tournamentData.vfLocked = !tournamentData.vfLocked;
             } else {
                 tournamentData.mfLocked = !tournamentData.mfLocked;
             }
+            
+            // Pokud jsme právě uzamkli (ne odemkli), ulož výsledky
+            if (!wasLocked && (tournamentData.vfLocked || tournamentData.mfLocked)) {
+                // Počkej až se dokončí oba pavouky
+                if (tournamentData.vfLocked && tournamentData.mfLocked) {
+                    saveTournamentResult();
+                }
+            }
+            
             displayBrackets();
             autosaveTick();
             liveNotifyChange();
@@ -4887,6 +4911,16 @@
             showStep(7);
         }
 
+        // ── §23a  KROK 7a – TURNAJE VÝSLEDKY ─────────────────────────────
+        function goToStep7a() {
+            displayTournamentResults();
+            showStep('7a');
+        }
+
+        function filterTournamentResults() {
+            displayTournamentResults();
+        }
+
         // ── §23b  KROK 8 – STATISTIKY ────────────────────────────────────
         function goToStep8() {
             displayStats();
@@ -5207,6 +5241,292 @@
             renderTurnajEditorList();
         }
 
+        // ── §24b  TURNAJOVÉ VÝSLEDKY (ULOŽENÉ SNAPSHOTY) ────────────────
+
+        function saveTournamentResult() {
+            if (!tournamentData.location || !tournamentData.date) {
+                console.warn('Chybí lokace nebo datum turnaje');
+                return;
+            }
+
+            // Přepočítej statistiky
+            calculatePlayerStats();
+
+            const key = `tournament_result_${tournamentData.category}_${tournamentData.location}_${tournamentData.date}`;
+            
+            // Vytvoř snapshot kompletních výsledků
+            const result = {
+                category: tournamentData.category,
+                categoryName: categoryFullNames[tournamentData.category],
+                location: tournamentData.location,
+                date: tournamentData.date,
+                round: tournamentData.round || '1. kolo',
+                savedAt: new Date().toISOString(),
+                
+                // Konečné pořadí
+                finalStandings: [...tournamentData.players]
+                    .sort((a, b) => (b.currentPoints || 0) - (a.currentPoints || 0))
+                    .map((p, i) => ({
+                        placement: i + 1,
+                        name: p.name,
+                        points: p.currentPoints || 0,
+                        wins: p.wins || 0,
+                        losses: p.losses || 0,
+                        setsWon: p.setsWon || 0,
+                        setsLost: p.setsLost || 0
+                    })),
+                
+                // Skupinové výsledky
+                groups: tournamentData.groups.map((group, idx) => ({
+                    name: String.fromCharCode(65 + idx),
+                    players: sortGroupByRules(group, idx).map((p, i) => ({
+                        placement: i + 1,
+                        name: p.name,
+                        wins: p.wins || 0,
+                        losses: p.losses || 0,
+                        setsWon: p.setsWon || 0,
+                        setsLost: p.setsLost || 0,
+                        points: p.currentPoints || 0
+                    }))
+                })),
+                
+                // Výsledky z pavouků
+                brackets: {
+                    vf: extractBracketResults(tournamentData.vfBracket, 'VF'),
+                    mf: extractBracketResults(tournamentData.mfBracket, 'MF')
+                }
+            };
+
+            try {
+                localStorage.setItem(key, JSON.stringify(result));
+                
+                // Aktualizuj index
+                const indexKey = `tournament_results_index_${tournamentData.category}`;
+                const index = JSON.parse(localStorage.getItem(indexKey) || '[]');
+                if (!index.includes(key)) {
+                    index.push(key);
+                    localStorage.setItem(indexKey, JSON.stringify(index));
+                }
+                
+                console.log('✅ Výsledky turnaje uloženy:', key);
+            } catch(e) {
+                console.error('❌ Chyba při ukládání výsledků:', e);
+            }
+        }
+
+        function extractBracketResults(bracket, type) {
+            if (!bracket || bracket.length === 0) return null;
+            
+            const results = [];
+            bracket.forEach((round, roundIdx) => {
+                round.forEach((match, matchIdx) => {
+                    if (match.played && !match.player1?.isBye && !match.player2?.isBye) {
+                        const p1Name = match.player1?.name || match.player1?.displayName?.split(' ').slice(1).join(' ');
+                        const p2Name = match.player2?.name || match.player2?.displayName?.split(' ').slice(1).join(' ');
+                        
+                        results.push({
+                            round: roundIdx + 1,
+                            player1: p1Name,
+                            player2: p2Name,
+                            score: `${match.score1}:${match.score2}`,
+                            winner: match.winner === 1 ? p1Name : p2Name
+                        });
+                    }
+                });
+            });
+            
+            return results;
+        }
+
+        function displayTournamentResults() {
+            const container = document.getElementById('tournamentResultsContent');
+            const selector = document.getElementById('resultsCategory');
+            
+            // Naplň kategorie pokud ještě nejsou
+            if (selector && selector.options.length === 0) {
+                Object.keys(categoryFullNames).forEach(key => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = categoryFullNames[key];
+                    selector.appendChild(option);
+                });
+                // Vyber aktuální kategorii
+                if (tournamentData.category) {
+                    selector.value = tournamentData.category;
+                }
+            }
+            
+            // Použij vybranou kategorii nebo aktuální
+            const category = selector ? selector.value : tournamentData.category;
+            
+            container.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Načítám výsledky...</div>';
+            
+            try {
+                const indexKey = `tournament_results_index_${category}`;
+                const index = JSON.parse(localStorage.getItem(indexKey) || '[]');
+                
+                if (index.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align:center;padding:40px;background:#f8f9fa;border-radius:12px;color:#888;">
+                            <div style="font-size:48px;margin-bottom:12px;">📋</div>
+                            <div style="font-size:18px;font-weight:600;margin-bottom:6px;">Žádné uložené výsledky</div>
+                            <div style="font-size:14px;">Výsledky se uloží automaticky po uzamčení vyřazovací části (VF i MF).</div>
+                        </div>`;
+                    return;
+                }
+                
+                // Načti všechny výsledky
+                const results = index.map(key => {
+                    try {
+                        return JSON.parse(localStorage.getItem(key));
+                    } catch(e) {
+                        return null;
+                    }
+                }).filter(r => r !== null);
+                
+                // Seřaď podle data
+                results.sort((a, b) => new Date(b.date) - new Date(a.date));
+                
+                // Zobraz seznam
+                let html = `
+                    <div style="margin-bottom:20px;">
+                        <h3 style="color:#1e3c72;margin-bottom:10px;">Uložené výsledky - ${categoryFullNames[category]}</h3>
+                        <p style="color:#666;font-size:14px;">Celkem turnajů: ${results.length}</p>
+                    </div>
+                `;
+                
+                results.forEach((result, idx) => {
+                    html += renderTournamentResult(result, idx);
+                });
+                
+                container.innerHTML = html;
+                
+            } catch(e) {
+                container.innerHTML = `
+                    <div style="text-align:center;padding:40px;color:#dc3545;">
+                        <div style="font-size:48px;margin-bottom:12px;">⚠️</div>
+                        <div style="font-size:18px;font-weight:600;">Chyba při načítání výsledků</div>
+                    </div>`;
+                console.error('Chyba při zobrazení výsledků:', e);
+            }
+        }
+
+        function renderTournamentResult(result, idx) {
+            const dateFormatted = new Date(result.date).toLocaleDateString('cs-CZ');
+            const top3 = result.finalStandings.slice(0, 3);
+            
+            let html = `
+                <div style="background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:20px;margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:15px;">
+                        <div>
+                            <h4 style="color:#1e3c72;margin:0 0 5px 0;">${result.location}</h4>
+                            <div style="color:#666;font-size:13px;">
+                                📅 ${dateFormatted} | ${result.round || '1. kolo'}
+                            </div>
+                        </div>
+                        <button onclick="toggleResultDetail(${idx})" 
+                            style="background:#f0f0f0;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">
+                            <span id="toggle-${idx}">👁️ Zobrazit detail</span>
+                        </button>
+                    </div>
+                    
+                    <div style="background:#f8f9fa;padding:15px;border-radius:8px;">
+                        <div style="font-weight:600;color:#1e3c72;margin-bottom:10px;">🏆 Top 3:</div>
+                        ${top3.map((p, i) => {
+                            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+                            return `
+                                <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e0e0e0;">
+                                    <span>${medal} <strong>${p.name}</strong></span>
+                                    <span style="color:#666;">${p.wins}V-${p.losses}P | ${p.points} bodů</span>
+                                </div>`;
+                        }).join('')}
+                    </div>
+                    
+                    <div id="result-detail-${idx}" style="display:none;margin-top:15px;"></div>
+                </div>
+            `;
+            
+            return html;
+        }
+
+        function toggleResultDetail(idx) {
+            const detailDiv = document.getElementById(`result-detail-${idx}`);
+            const toggleBtn = document.getElementById(`toggle-${idx}`);
+            
+            if (detailDiv.style.display === 'none') {
+                // Načti a zobraz detail
+                const selector = document.getElementById('resultsCategory');
+                const category = selector ? selector.value : tournamentData.category;
+                const indexKey = `tournament_results_index_${category}`;
+                const index = JSON.parse(localStorage.getItem(indexKey) || '[]');
+                const result = JSON.parse(localStorage.getItem(index[idx]));
+                
+                let html = '<div style="border-top:2px solid #e0e0e0;padding-top:15px;">';
+                
+                // Skupiny
+                if (result.groups && result.groups.length > 0) {
+                    html += '<h5 style="color:#1e3c72;margin-bottom:10px;">📊 Skupiny:</h5>';
+                    result.groups.forEach(group => {
+                        html += `
+                            <div style="margin-bottom:15px;">
+                                <div style="font-weight:600;margin-bottom:5px;">Skupina ${group.name}:</div>
+                                <table style="width:100%;font-size:13px;border-collapse:collapse;">
+                                    <tr style="background:#f0f0f0;">
+                                        <th style="padding:5px;text-align:left;">Hráč</th>
+                                        <th style="padding:5px;text-align:center;">V-P</th>
+                                        <th style="padding:5px;text-align:center;">Sety</th>
+                                    </tr>
+                                    ${group.players.map(p => `
+                                        <tr style="border-bottom:1px solid #e0e0e0;">
+                                            <td style="padding:5px;">${p.placement}. ${p.name}</td>
+                                            <td style="padding:5px;text-align:center;">${p.wins}-${p.losses}</td>
+                                            <td style="padding:5px;text-align:center;">${p.setsWon}:${p.setsLost}</td>
+                                        </tr>
+                                    `).join('')}
+                                </table>
+                            </div>
+                        `;
+                    });
+                }
+                
+                // Pavouk VF
+                if (result.brackets.vf && result.brackets.vf.length > 0) {
+                    html += `
+                        <h5 style="color:#1e3c72;margin-top:15px;margin-bottom:10px;">🏆 Hlavní finále (VF):</h5>
+                        <div style="font-size:13px;">
+                            ${result.brackets.vf.map(m => `
+                                <div style="padding:5px 0;border-bottom:1px solid #e0e0e0;">
+                                    ${m.player1} vs ${m.player2}: <strong>${m.score}</strong> (Vítěz: ${m.winner})
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                
+                // Pavouk MF
+                if (result.brackets.mf && result.brackets.mf.length > 0) {
+                    html += `
+                        <h5 style="color:#1e3c72;margin-top:15px;margin-bottom:10px;">🥉 Malé finále (MF):</h5>
+                        <div style="font-size:13px;">
+                            ${result.brackets.mf.map(m => `
+                                <div style="padding:5px 0;border-bottom:1px solid #e0e0e0;">
+                                    ${m.player1} vs ${m.player2}: <strong>${m.score}</strong> (Vítěz: ${m.winner})
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                detailDiv.innerHTML = html;
+                detailDiv.style.display = 'block';
+                toggleBtn.textContent = '🔼 Skrýt detail';
+            } else {
+                detailDiv.style.display = 'none';
+                toggleBtn.textContent = '👁️ Zobrazit detail';
+            }
+        }
+
         // ── §25  ULOŽENÍ DO SEZÓNY ───────────────────────────────────────
         function safeKey(str) {
             return str.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 100);
@@ -5468,9 +5788,14 @@
                         <tr style="background:linear-gradient(135deg,#1e3c72,#2a5298); color:white;">
                             <th style="padding:10px 12px; text-align:center;">#</th>
                             <th style="padding:10px 12px; text-align:left;">Hráč</th>
-                            ${sortedTournaments.map(t => {
+                            ${sortedTournaments.map((t, tIdx) => {
                                 const short = t.location.split('–').pop().trim().split(' ')[0];
-                                return `<th style="padding:10px 8px; text-align:center; font-size:11px;">${short}</th>`;
+                                return `<th style="padding:10px 8px; text-align:center; font-size:11px; cursor:pointer;" 
+                                    onclick="toggleSeasonTournamentDetail('${catKey}', ${tIdx})" 
+                                    title="Klikněte pro detail turnaje">
+                                    ${short}<br>
+                                    <span style="font-size:9px;opacity:0.7;">👁️ detail</span>
+                                </th>`;
                             }).join('')}
                             <th style="padding:10px 12px; text-align:center; background:rgba(255,255,255,0.15);">Celkem</th>
                         </tr>
@@ -5492,6 +5817,9 @@
                     </tbody>
                 </table>
                 </div>
+                
+                <div id="seasonTournamentDetail" style="margin-top:20px;"></div>
+                
                 <div style="margin-top:16px; text-align:right;">
                     <button class="admin-only" style="background:none;border:1px solid #dc3545;color:#dc3545;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;" onclick="clearCategorySeasonData('${catKey}')" style="background:none; border:1px solid #dc3545; color:#dc3545; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px;">
                         🗑️ Vymazat data ${catFullName}
@@ -5511,6 +5839,159 @@
                 + '<button class="viewer-allow" onclick="exportSeasonPDF()" style="display:flex;align-items:center;gap:7px;background:linear-gradient(135deg,#c0392b,#e74c3c);color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700;">'
                 + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportovat PDF</button>';
             container.appendChild(exportBar);
+        }
+
+        function toggleSeasonTournamentDetail(catKey, tournamentIdx) {
+            const detailContainer = document.getElementById('seasonTournamentDetail');
+            const exportData = window._seasonExportData;
+            
+            if (!exportData) return;
+            
+            const tournament = exportData.sortedTournaments[tournamentIdx];
+            if (!tournament) return;
+            
+            // Pokud je detail už zobrazený pro tento turnaj, skryj ho
+            if (detailContainer.dataset.currentTournament === String(tournamentIdx)) {
+                detailContainer.innerHTML = '';
+                detailContainer.dataset.currentTournament = '';
+                return;
+            }
+            
+            detailContainer.dataset.currentTournament = String(tournamentIdx);
+            detailContainer.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Načítám detail turnaje...</div>';
+            
+            // Zkus najít detailní výsledky z tournament_result_
+            // Klíč je: tournament_result_{kategorie}_{lokace}_{datum}
+            // Ale v season data máme jen location bez data, musíme hledat v indexu
+            try {
+                const indexKey = `tournament_results_index_${catKey}`;
+                const index = JSON.parse(localStorage.getItem(indexKey) || '[]');
+                
+                // Najdi záznam který odpovídá tomuto turnaji (location match)
+                let tournamentResult = null;
+                for (const key of index) {
+                    const result = JSON.parse(localStorage.getItem(key) || 'null');
+                    if (result && result.location === tournament.location) {
+                        tournamentResult = result;
+                        break;
+                    }
+                }
+                
+                if (!tournamentResult) {
+                    detailContainer.innerHTML = `
+                        <div style="background:#fff3cd;padding:15px;border-radius:8px;border:1px solid #ffc107;">
+                            <strong>⚠️ Detail turnaje nenalezen</strong>
+                            <p style="margin:8px 0 0 0;font-size:13px;">Detailní výsledky (skupiny, pavouk) jsou dostupné pouze pro turnaje uzamčené po zavedení této funkce.</p>
+                        </div>`;
+                    return;
+                }
+                
+                // Zobraz detail
+                let html = `
+                    <div style="background:#fff;border:2px solid #1e3c72;border-radius:12px;padding:20px;margin-top:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                            <h3 style="color:#1e3c72;margin:0;">${tournamentResult.location}</h3>
+                            <button onclick="toggleSeasonTournamentDetail('${catKey}', ${tournamentIdx})" 
+                                style="background:#f0f0f0;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;">
+                                ✖ Zavřít
+                            </button>
+                        </div>
+                        
+                        <div style="color:#666;font-size:13px;margin-bottom:15px;">
+                            📅 ${new Date(tournamentResult.date).toLocaleDateString('cs-CZ')} | ${tournamentResult.round || '1. kolo'}
+                        </div>
+                `;
+                
+                // Top 3 hráči
+                const top3 = tournamentResult.finalStandings.slice(0, 3);
+                html += `
+                    <div style="background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;">
+                        <h4 style="color:#1e3c72;margin:0 0 10px 0;">🏆 Top 3:</h4>
+                        ${top3.map((p, i) => {
+                            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+                            return `
+                                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e0e0e0;">
+                                    <span>${medal} <strong>${p.name}</strong></span>
+                                    <span style="color:#666;">${p.wins}V-${p.losses}P | ${p.points} bodů</span>
+                                </div>`;
+                        }).join('')}
+                    </div>
+                `;
+                
+                // Skupiny
+                if (tournamentResult.groups && tournamentResult.groups.length > 0) {
+                    html += '<h4 style="color:#1e3c72;margin:20px 0 10px 0;">📊 Skupinové výsledky:</h4>';
+                    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:15px;">';
+                    
+                    tournamentResult.groups.forEach(group => {
+                        html += `
+                            <div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+                                <div style="font-weight:700;color:#1e3c72;margin-bottom:8px;">Skupina ${group.name}</div>
+                                <table style="width:100%;font-size:12px;border-collapse:collapse;">
+                                    <tr style="background:#e0e0e0;">
+                                        <th style="padding:5px;text-align:left;">Hráč</th>
+                                        <th style="padding:5px;text-align:center;">V-P</th>
+                                        <th style="padding:5px;text-align:center;">Sety</th>
+                                        <th style="padding:5px;text-align:center;">Body</th>
+                                    </tr>
+                                    ${group.players.map(p => `
+                                        <tr style="border-bottom:1px solid #ddd;">
+                                            <td style="padding:5px;">${p.placement}. ${p.name}</td>
+                                            <td style="padding:5px;text-align:center;">${p.wins}-${p.losses}</td>
+                                            <td style="padding:5px;text-align:center;">${p.setsWon}:${p.setsLost}</td>
+                                            <td style="padding:5px;text-align:center;font-weight:700;">${p.points}</td>
+                                        </tr>
+                                    `).join('')}
+                                </table>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+                
+                // Pavouk VF
+                if (tournamentResult.brackets.vf && tournamentResult.brackets.vf.length > 0) {
+                    html += `
+                        <h4 style="color:#1e3c72;margin:20px 0 10px 0;">🏆 Hlavní finále (VF):</h4>
+                        <div style="background:#f8f9fa;padding:15px;border-radius:8px;">
+                            ${tournamentResult.brackets.vf.map((m, idx) => `
+                                <div style="padding:8px 0;border-bottom:${idx < tournamentResult.brackets.vf.length - 1 ? '1px solid #e0e0e0' : 'none'};font-size:13px;">
+                                    <strong>${m.player1}</strong> vs <strong>${m.player2}</strong>
+                                    <span style="margin-left:10px;color:#1e3c72;font-weight:700;">${m.score}</span>
+                                    <span style="margin-left:10px;color:#666;">→ ${m.winner}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                
+                // Pavouk MF
+                if (tournamentResult.brackets.mf && tournamentResult.brackets.mf.length > 0) {
+                    html += `
+                        <h4 style="color:#1e3c72;margin:20px 0 10px 0;">🥉 Malé finále (MF):</h4>
+                        <div style="background:#f8f9fa;padding:15px;border-radius:8px;">
+                            ${tournamentResult.brackets.mf.map((m, idx) => `
+                                <div style="padding:8px 0;border-bottom:${idx < tournamentResult.brackets.mf.length - 1 ? '1px solid #e0e0e0' : 'none'};font-size:13px;">
+                                    <strong>${m.player1}</strong> vs <strong>${m.player2}</strong>
+                                    <span style="margin-left:10px;color:#1e3c72;font-weight:700;">${m.score}</span>
+                                    <span style="margin-left:10px;color:#666;">→ ${m.winner}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                detailContainer.innerHTML = html;
+                
+            } catch (e) {
+                console.error('Chyba při načítání detailu turnaje:', e);
+                detailContainer.innerHTML = `
+                    <div style="background:#f8d7da;padding:15px;border-radius:8px;border:1px solid #f5c6cb;color:#721c24;">
+                        <strong>❌ Chyba při načítání detailu</strong>
+                        <p style="margin:8px 0 0 0;font-size:13px;">${e.message}</p>
+                    </div>`;
+            }
         }
 
         // ── §26  EXPORT SEZÓNA (XLS/PDF) ────────────────────────────────
